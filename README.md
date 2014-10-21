@@ -31,6 +31,13 @@ Install the following command line utilities so you can interact with the cluste
 * [etcdctl](https://github.com/coreos/etcdctl)
 * [fleetctl](https://github.com/coreos/fleet)
 * [kubecfg](https://github.com/GoogleCloudPlatform/kubernetes)
+```
+$ go get github.com/coreos/etcdctl
+$ go get github.com/coreos/fleet/fleetctl
+$ gsutil mb gs://proppy-stuff-kubernetes
+$ curl -L https://github.com/GoogleCloudPlatform/kubernetes/releases/download/v0.4.1/kubernetes.tar.gz | tar xvzf -
+$ gsutil cp ./kubernetes/platforms/linux/amd64/* gs://proppy-stuff-kubernetes/v0.4.1/
+$ gsutil acl ch -R -g AllUsers:R gs://proppy-stuff-kubernetes/v0.4.1
 
 ## Setup a Dedicated etcd Cluster
 
@@ -42,19 +49,23 @@ For simplicity, setup a single node etcd cluster using the following cloud-confi
 
 * [etcd.yml](configs/etcd.yml)
 
+```
+$ gcloud compute instances create etcd-node --image https://www.googleapis.com/compute/v1/projects/coreos-cloud/global/images/coreos-stable-444-5-0-v20141016 --zone us-central1-a --machine-type f1-micro --metadata-from-file user-data=configs/etcd.yml 
+
 > Be sure to change the static IP address info in the etcd.yml cloud-config file to fit your environment.
 
 I'm using a static IP address to make it easy to locate the etcd node later. Once you have the etcd IP, export the following environment variables used by the etcdctl and fleetctl clients:
 
 ```
-$ export ETCDCTL_PEERS=http://192.168.12.10:4001
-$ export FLEETCTL_ENDPOINT=http://192.168.12.10:4001
-```
+$ gcloud compute ssh etcd-node --ssh-flag="-L 4001:localhost:4001" --ssh-flag="-fN" --zone us-central1-a
+$ export ETCDCTL_PEERS=http://localhost:4001
+$ export FLEETCTL_ENDPOINT=http://localhost:4001
 
+```
 Check that both the etcdctl and fleetctl clients are working:
 
 ```
-$ etcdctl ls /
+$ etcdctl --no-sync ls /
 ```
 
 ```
@@ -68,7 +79,7 @@ MACHINE     IP              METADATA
 flannel is used to setup and manage an overlay network, which will allow containers on different Kubernetes hosts to communicate. flannel reads it's runtime configuration from etcd, and requires a network block to be allocated for use by Kubernetes. Add the flannel configuration using etcdctl:
 
 ```
-$ etcdctl mk /coreos.com/network/config '{"Network":"10.0.0.0/16"}'
+$ etcdctl --no-sync mk /coreos.com/network/config '{"Network":"10.0.0.0/16"}'
 ```
 
 ## Add Machines to the Cluster
@@ -76,6 +87,10 @@ $ etcdctl mk /coreos.com/network/config '{"Network":"10.0.0.0/16"}'
 At this point we are ready to start adding machines to the cluster. 
 
 Pick your [favorite platform](https://coreos.com/docs/quickstart) and launch a couple of CoreOS machines using the `node.yml` cloud-config template.
+
+### On GCE
+
+$ gcloud compute instances create kube-nodeNN --image https://www.googleapis.com/compute/v1/projects/coreos-cloud/global/images/coreos-stable-444-5-0-v20141016 --zone us-central1-a --machine-type f1-micro --metadata-from-file user-data=configs/node.yml
 
 > Be sure to adjust the IP address of your etcd server and SSH key in the node.yml cloud-config file.
 
@@ -96,16 +111,16 @@ Notice all the "worker" machines have the `role=kubernetes` metadata field.
 Two of the Kubernetes components, the Kubelet and Proxy service, must run on every Kubernetes machine. Fleet can ensure this happens using [global units](https://github.com/coreos/fleet/blob/master/Documentation/unit-files-and-scheduling.md#unit-scheduling) and metadata filtering. The following unit files will run on every CoreOS machine where `role=kubernetes`:
 
 ```
-$ fleetctl start kube-proxy.service
-$ fleetctl start kube-kubelet.service
+$ fleetctl start units/kube-proxy.service
+$ fleetctl start units/kube-kubelet.service
 ```
 
 The other Kubernetes components make up the Kubernetes Master and only require a single instance to be running. The Kubernetes Master can run anywhere in the cluster, but we'll need to locate the IP address of the Kubernetes API server once it's up and running so we can configure the kubecfg Kubernetes client. 
 
 ```
-$ fleetctl start kube-apiserver.service
-$ fleetctl start kube-scheduler.service
-$ fleetctl start kube-controller-manager.service
+$ fleetctl start units/kube-apiserver.service
+$ fleetctl start units/kube-scheduler.service
+$ fleetctl start units/kube-controller-manager.service
 ```
 
 List the running units:
@@ -125,7 +140,8 @@ kube-scheduler.service          a6681f2c.../192.168.12.229  active  running
 Once you've located the kube-apiserver set the KUBERNETES_MASTER environment variable, which configures the kubecfg client use this API server:
 
 ```
-$ export KUBERNETES_MASTER="http://192.168.12.229:8080"
+$ gcloud compute ssh kube-nodeNN --ssh-flag="-L 8080:localhost:8080" --ssh-flag="-fN" --zone us-central1-a
+$ export KUBERNETES_MASTER="http://localhost:8080"
 ```
 
 ## Auto Registering Kubernetes Kubelets with kube-register
@@ -139,7 +155,7 @@ Thanks to Fleet global units, new machines will get the Kubernetes Kubelet insta
 Start the registration service using fleet:
 
 ```
-$ fleetctl start kube-register.service
+$ fleetctl start units/kube-register.service
 ```
 
 The kube-register service needs to know where the Kubernetes API server is in order to register machines. This is accomplished using a Fleet requirement in the kube-register.service unit file:
@@ -157,8 +173,9 @@ You can now list the registered Kubernetes Kubelets using the kubecfg client:
 $ kubecfg list /minions
 Minion identifier
 ----------
-192.168.12.228
-192.168.12.229
+10.240.23.37
+10.240.12.181
+10.240.163.58
 ```
 
 At this point you are ready to launch pods using the kubecfg command tool, or the Kubernetes API.

@@ -6,13 +6,13 @@ After=setup-network-environment.service
 
 [Service]
 EnvironmentFile=/etc/network-environment
-ExecStartPre=/usr/bin/wget -N -P /opt/bin http://storage.googleapis.com/kubernetes/kubelet
+ExecStartPre=/usr/bin/wget -N -P /opt/bin http://storage.googleapis.com/proppy-stuff-kubernetes/v0.4.1/kubelet
 ExecStartPre=/usr/bin/chmod +x /opt/bin/kubelet
 ExecStart=/opt/bin/kubelet \
 --address=0.0.0.0 \
 --port=10250 \
 --hostname_override=${DEFAULT_IPV4} \
---etcd_servers=http://192.168.12.10:4001 \
+--etcd_servers=http://10.240.33.67:4001 \
 --logtostderr=true
 Restart=always
 RestartSec=10
