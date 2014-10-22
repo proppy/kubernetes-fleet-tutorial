@@ -183,3 +183,34 @@ At this point you are ready to launch pods using the kubecfg command tool, or th
 ## Adding and removing machines
 
 Adding more machines is as easy as starting up more nodes using the `node.yml` cloud-config file. The same is true for removing machines, simply destroy them and Fleet will reschedule the units.
+
+## Create pod and services
+```
+$ kubecfg -c pod.json create pods
+$ kubecfg -c service.json create services
+```
+
+## Expose external service 
+Address the service through the node
+```
+$ SERVICE_PORT=80
+$ gcloud compute firewall-rules allow-http create --allow tcp:$SERVICE_PORT
+```
+
+Add external load balancer
+```
+$ gcloud compute http-health-checks create basic-check
+$ REGION=us-central1
+$ gcloud compute target-pools create www-pool --region $REGION --health-check basic-check
+$ ZONE=us-central1-a
+$ gcloud compute target-pools add-instances www-pool --instances kube-node1 kube-node2 kube-node3 kube-node4 --zone $ZONE
+$ gcloud compute addresses create kube-node-lb
+$ ADDRESS=23.251.153.171
+$ gcloud compute forwarding-rules create www-rule --region $REGION --port-range $SERVICE_PORT --target-pool www-pool --address $ADDRESS
+```
+
+Add DNS A record
+```
+gcloud dns managed-zone create --dns_name="proppy.sh." --description="proppy.sh zone" proppy-sh
+gcloud dns records edit --zone="proppy-sh"
+```
